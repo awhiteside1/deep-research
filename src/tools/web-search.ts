@@ -10,10 +10,6 @@ const log = getToolLogger('web-search');
 
 const ParamsSchema = Type.Object({
   query: Type.String({ description: 'Search query string for the web search engine.' }),
-  researchGoal: Type.String({
-    description:
-      'Why this query is being run and how its results should advance the overall research.',
-  }),
 });
 
 type Params = Static<typeof ParamsSchema>;
@@ -63,8 +59,6 @@ export function createWebSearchTool(deps: WebSearchToolDeps): AgentTool<typeof P
             : null,
         ),
       );
-      for (const it of items) deps.state.visitedUrls.add(it.url);
-
       const text =
         items.length === 0
           ? `No results for "${params.query}".`

@@ -58,7 +58,7 @@ function summarize(text: string, limit = 500): string {
   return text.length <= limit ? text : `${text.slice(0, limit)}…`;
 }
 
-function extractText(content: unknown): string {
+export function extractText(content: unknown): string {
   if (!Array.isArray(content)) return '';
   return content
     .filter((c: any) => c && c.type === 'text')

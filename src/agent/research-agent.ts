@@ -3,13 +3,13 @@ import type { AgentTool } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage } from '@mariozechner/pi-ai';
 
 import { getModel } from '../ai/providers.js';
-import { attachLogging } from '../logging.js';
+import { attachLogging, extractText } from '../logging.js';
 import { createResearchState, type ResearchState } from '../tools/state.js';
 import { createReadPageTool } from '../tools/read-page.js';
 import { createWebSearchTool } from '../tools/web-search.js';
 import { UsageTracker } from './usage.js';
 
-const HARD_TURN_CEILING = 20;
+const HARD_TURN_CEILING = 10;
 
 export interface RunResearchAgentOptions {
   query: string;
@@ -35,7 +35,7 @@ Do not ask the user clarifying questions — there is no interactive channel bac
 Hard ceiling: ${turnCeiling} turns. One turn = one assistant message (parallel tool calls count as one). Stop earlier — usually much earlier — once you can answer well. Do not pad.
 
 Tools:
-- web_search(query, researchGoal) — returns top result links (url/title/snippet) only. Does NOT fetch bodies.
+- web_search(query) — returns top result links (url/title/snippet) only. Does NOT fetch bodies.
 - read_page(url, sections?, query?) — fetch a page. Small pages return in full. Large pages return an outline; call again with sections=["Heading > Subheading", ...] to get just those parts. Pages are cached.
 
 Workflow: search to find candidate URLs, read_page on the most promising ones, drill into specific sections of large pages instead of dumping them whole.
@@ -46,18 +46,9 @@ Cost grows every turn. Each turn re-sends the entire conversation plus all prior
 - If a page's outline doesn't have what you need, switch sources rather than re-querying the same URL.
 - When the answer is in hand, stop. Extra confirmation reads are rarely worth their cost.
 
-Finish with a turn containing NO tool calls — just the final answer or report in Markdown. That message is what gets saved verbatim, so make it the deliverable.
+Finish with a turn containing NO tool calls — just the final answer or report in Markdown. That message is what gets saved verbatim, so make it the deliverable. Sources are tracked and appended automatically — do not list them yourself.
 
 This is a non-interactive run. The user cannot reply. Do NOT end with offers like "I can also turn this into a profile/summary/table/deeper dive — let me know" or any other follow-up prompt. No questions, no menu of alternative formats, no "want me to…". Decide the right shape, deliver it, stop.`;
-}
-
-function extractText(content: unknown): string {
-  if (!Array.isArray(content)) return '';
-  return content
-    .filter((c: any) => c && c.type === 'text')
-    .map((c: any) => c.text)
-    .join('')
-    .trim();
 }
 
 export async function runResearchAgent(
@@ -65,7 +56,7 @@ export async function runResearchAgent(
 ): Promise<RunResearchAgentResult> {
   const turnCeiling = HARD_TURN_CEILING;
   const state = createResearchState();
-  const { model, options: providerOptions } = getModel();
+  const { model, modelId, options: providerOptions } = getModel();
 
   let turnIndex = 0;
   const isLastTurn = () => turnIndex >= turnCeiling;
@@ -94,7 +85,7 @@ export async function runResearchAgent(
   attachLogging(agent, {
     query: options.query,
     maxTurns: turnCeiling,
-    modelId: getModel().modelId,
+    modelId: modelId,
   });
 
   let answer = '';
@@ -102,7 +93,7 @@ export async function runResearchAgent(
     if (event.type === 'turn_end') {
       turnIndex += 1;
       const msg = event.message as AssistantMessage | undefined;
-      const text = extractText(msg?.content);
+      const text = extractText(msg?.content).trim();
       if (text) answer = text;
       if (turnIndex === turnCeiling - 1) {
         agent.steer({

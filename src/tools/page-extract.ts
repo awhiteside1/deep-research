@@ -86,25 +86,65 @@ function buildPaths(headings: HeadingInfo[]): string[] {
   });
 }
 
-function headingLine(h: HeadingInfo): string {
-  return `${'#'.repeat(h.level)} ${h.text}`;
+const pathsCache = new WeakMap<ExtractedPage, string[]>();
+const positionsCache = new WeakMap<ExtractedPage, number[]>();
+
+function getCachedPaths(page: ExtractedPage): string[] {
+  let p = pathsCache.get(page);
+  if (!p) { p = buildPaths(page.headings); pathsCache.set(page, p); }
+  return p;
+}
+
+// Scan markdown once to find the character offset of each heading,
+// matching by level + normalized text so Unicode/whitespace variants resolve correctly.
+function getHeadingPositions(page: ExtractedPage): number[] {
+  let positions = positionsCache.get(page);
+  if (positions) return positions;
+
+  positions = new Array<number>(page.headings.length).fill(-1);
+  const unmatched = new Set(page.headings.map((_, i) => i));
+  const md = page.markdown;
+  let lineStart = 0;
+
+  for (let i = 0; i <= md.length; i++) {
+    if (i === md.length || md[i] === '\n') {
+      if (unmatched.size > 0 && md[lineStart] === '#') {
+        const line = md.slice(lineStart, i);
+        const m = line.match(/^(#+) (.*)/);
+        if (m) {
+          const level = m[1]!.length;
+          const text = normalize(m[2]!);
+          for (const idx of unmatched) {
+            const h = page.headings[idx]!;
+            if (h.level === level && normalize(h.text) === text) {
+              positions[idx] = lineStart;
+              unmatched.delete(idx);
+              break;
+            }
+          }
+        }
+      }
+      lineStart = i + 1;
+    }
+  }
+
+  positionsCache.set(page, positions);
+  return positions;
 }
 
 export function getSection(page: ExtractedPage, index: number): Section | null {
   const h = page.headings[index];
   if (!h) return null;
-  const paths = buildPaths(page.headings);
-  const startLine = headingLine(h);
-  const start = page.markdown.indexOf(startLine);
-  if (start === -1) return null;
+  const paths = getCachedPaths(page);
+  const positions = getHeadingPositions(page);
+  const start = positions[index];
+  if (start === undefined || start === -1) return null;
 
   let end = page.markdown.length;
-  for (let j = 0; j < page.headings.length; j++) {
+  for (let j = 0; j < positions.length; j++) {
     if (j === index) continue;
-    const other = page.headings[j]!;
-    const line = headingLine(other);
-    const idx = page.markdown.indexOf(line, start + startLine.length);
-    if (idx !== -1 && idx < end) end = idx;
+    const p = positions[j]!;
+    if (p > start && p < end) end = p;
   }
   const md = page.markdown.slice(start, end).trim();
   return {
@@ -121,7 +161,7 @@ export function findHeadingIndex(
 ): number {
   const target = normalize(selector);
   if (!target) return -1;
-  const paths = buildPaths(page.headings);
+  const paths = getCachedPaths(page);
   // 1) anchor id
   for (let i = 0; i < page.headings.length; i++) {
     const h = page.headings[i]!;
@@ -179,7 +219,7 @@ export function packToBudget(
 }
 
 export function getOutline(page: ExtractedPage): { path: string; level: number; tokenCount: number }[] {
-  const paths = buildPaths(page.headings);
+  const paths = getCachedPaths(page);
   return page.headings.map((h, i) => {
     const s = getSection(page, i);
     return {
