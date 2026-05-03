@@ -1,7 +1,7 @@
 import cors from 'cors';
 import express, { Request, Response } from 'express';
 
-import { deepResearch, writeFinalAnswer,writeFinalReport } from './deep-research';
+import { deepResearch, writeFinalAnswer,writeFinalReport } from './deep-research.js';
 
 const app = express();
 const port = process.env.PORT || 3051;

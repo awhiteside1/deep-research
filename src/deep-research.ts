@@ -1,11 +1,10 @@
 import FirecrawlApp, { SearchResponse } from '@mendable/firecrawl-js';
-import { generateObject } from 'ai';
 import { compact } from 'lodash-es';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 
-import { getModel, trimPrompt } from './ai/providers';
-import { systemPrompt } from './prompt';
+import { generateObject, trimPrompt } from './ai/providers.js';
+import { systemPrompt } from './prompt.js';
 
 function log(...args: any[]) {
   console.log(...args);
@@ -49,7 +48,6 @@ async function generateSerpQueries({
   learnings?: string[];
 }) {
   const res = await generateObject({
-    model: getModel(),
     system: systemPrompt(),
     prompt: `Given the following prompt from the user, generate a list of SERP queries to research the topic. Return a maximum of ${numQueries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other: <prompt>${query}</prompt>\n\n${
       learnings
@@ -95,7 +93,6 @@ async function processSerpResult({
   log(`Ran ${query}, found ${contents.length} contents`);
 
   const res = await generateObject({
-    model: getModel(),
     abortSignal: AbortSignal.timeout(60_000),
     system: systemPrompt(),
     prompt: trimPrompt(
@@ -131,7 +128,6 @@ export async function writeFinalReport({
     .join('\n');
 
   const res = await generateObject({
-    model: getModel(),
     system: systemPrompt(),
     prompt: trimPrompt(
       `Given the following prompt from the user, write a final report on the topic using the learnings from research. Make it as as detailed as possible, aim for 3 or more pages, include ALL the learnings from research:\n\n<prompt>${prompt}</prompt>\n\nHere are all the learnings from previous research:\n\n<learnings>\n${learningsString}\n</learnings>`,
@@ -158,7 +154,6 @@ export async function writeFinalAnswer({
     .join('\n');
 
   const res = await generateObject({
-    model: getModel(),
     system: systemPrompt(),
     prompt: trimPrompt(
       `Given the following prompt from the user, write a final answer on the topic using the learnings from research. Follow the format specified in the prompt. Do not yap or babble or include any other text than the answer besides the format specified in the prompt. Keep the answer as concise as possible - usually it should be just a few words or maximum a sentence. Try to follow the format specified in the prompt (for example, if the prompt is using Latex, the answer should be in Latex. If the prompt gives multiple answer choices, the answer should be one of the choices).\n\n<prompt>${prompt}</prompt>\n\nHere are all the learnings from research on the topic that you can use to help answer the prompt:\n\n<learnings>\n${learningsString}\n</learnings>`,

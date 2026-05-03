@@ -1,8 +1,7 @@
-import { generateObject } from 'ai';
 import { z } from 'zod';
 
-import { getModel } from './ai/providers';
-import { systemPrompt } from './prompt';
+import { generateObject } from './ai/providers.js';
+import { systemPrompt } from './prompt.js';
 
 export async function generateFeedback({
   query,
@@ -12,7 +11,6 @@ export async function generateFeedback({
   numQuestions?: number;
 }) {
   const userFeedback = await generateObject({
-    model: getModel(),
     system: systemPrompt(),
     prompt: `Given the following query from the user, ask some follow up questions to clarify the research direction. Return a maximum of ${numQuestions} questions, but feel free to return less if the original query is clear: <query>${query}</query>`,
     schema: z.object({

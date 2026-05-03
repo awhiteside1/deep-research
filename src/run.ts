@@ -1,13 +1,13 @@
 import * as fs from 'fs/promises';
 import * as readline from 'readline';
 
-import { getModel } from './ai/providers';
+import { getModel } from './ai/providers.js';
 import {
   deepResearch,
   writeFinalAnswer,
   writeFinalReport,
-} from './deep-research';
-import { generateFeedback } from './feedback';
+} from './deep-research.js';
+import { generateFeedback } from './feedback.js';
 
 // Helper function for consistent logging
 function log(...args: any[]) {

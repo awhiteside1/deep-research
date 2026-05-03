@@ -1,61 +1,143 @@
-import { createFireworks } from '@ai-sdk/fireworks';
-import { createOpenAI } from '@ai-sdk/openai';
 import {
-  extractReasoningMiddleware,
-  LanguageModelV1,
-  wrapLanguageModel,
-} from 'ai';
+  complete,
+  getModel as getPiModel,
+  parseJsonWithRepair,
+  type Api,
+  type Context,
+  type Model,
+  type ProviderStreamOptions,
+} from '@mariozechner/pi-ai';
 import { getEncoding } from 'js-tiktoken';
+import { z } from 'zod';
 
-import { RecursiveCharacterTextSplitter } from './text-splitter';
+import { RecursiveCharacterTextSplitter } from './text-splitter.js';
 
-// Providers
-const openai = process.env.OPENAI_KEY
-  ? createOpenAI({
-      apiKey: process.env.OPENAI_KEY,
-      baseURL: process.env.OPENAI_ENDPOINT || 'https://api.openai.com/v1',
-    })
-  : undefined;
+type AnyModel = Model<Api>;
 
-const fireworks = process.env.FIREWORKS_KEY
-  ? createFireworks({
-      apiKey: process.env.FIREWORKS_KEY,
-    })
-  : undefined;
+interface ResolvedModel {
+  model: AnyModel;
+  options: ProviderStreamOptions;
+}
 
-const customModel = process.env.CUSTOM_MODEL
-  ? openai?.(process.env.CUSTOM_MODEL, {
-      structuredOutputs: true,
-    })
-  : undefined;
+function buildCustomModel(): ResolvedModel | undefined {
+  if (!process.env.CUSTOM_MODEL || !process.env.OPENAI_KEY) return undefined;
+  const baseUrl = process.env.OPENAI_ENDPOINT || 'https://api.openai.com/v1';
+  const model: Model<'openai-completions'> = {
+    id: process.env.CUSTOM_MODEL,
+    name: process.env.CUSTOM_MODEL,
+    api: 'openai-completions',
+    provider: 'openai',
+    baseUrl,
+    reasoning: false,
+    input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: Number(process.env.CONTEXT_SIZE) || 128_000,
+    maxTokens: 16_384,
+  };
+  return {
+    model: model as AnyModel,
+    options: { apiKey: process.env.OPENAI_KEY },
+  };
+}
 
-// Models
+function buildFireworksModel(): ResolvedModel | undefined {
+  if (!process.env.FIREWORKS_KEY) return undefined;
+  const model = getPiModel(
+    'fireworks',
+    'accounts/fireworks/models/deepseek-v3p1',
+  );
+  return {
+    model: model as AnyModel,
+    options: { apiKey: process.env.FIREWORKS_KEY },
+  };
+}
 
-const o3MiniModel = openai?.('o3-mini', {
-  reasoningEffort: 'medium',
-  structuredOutputs: true,
-});
+function buildOpenAIModel(): ResolvedModel | undefined {
+  if (!process.env.OPENAI_KEY) return undefined;
+  const model = getPiModel('openai', 'o3-mini');
+  return {
+    model: model as AnyModel,
+    options: { apiKey: process.env.OPENAI_KEY },
+  };
+}
 
-const deepSeekR1Model = fireworks
-  ? wrapLanguageModel({
-      model: fireworks(
-        'accounts/fireworks/models/deepseek-r1',
-      ) as LanguageModelV1,
-      middleware: extractReasoningMiddleware({ tagName: 'think' }),
-    })
-  : undefined;
-
-export function getModel(): LanguageModelV1 {
-  if (customModel) {
-    return customModel;
+let cached: ResolvedModel | undefined;
+function resolve(): ResolvedModel {
+  if (cached) return cached;
+  const found =
+    buildCustomModel() ?? buildFireworksModel() ?? buildOpenAIModel();
+  if (!found) {
+    throw new Error(
+      'No model configured. Set CUSTOM_MODEL+OPENAI_KEY, FIREWORKS_KEY, or OPENAI_KEY.',
+    );
   }
+  cached = found;
+  return found;
+}
 
-  const model = deepSeekR1Model ?? o3MiniModel;
-  if (!model) {
-    throw new Error('No model found');
+export function getModel(): { modelId: string } & ResolvedModel {
+  const r = resolve();
+  return { ...r, modelId: r.model.id };
+}
+
+function describeShape(schema: z.ZodTypeAny, indent = ''): string {
+  const def: any = (schema as any)._def;
+  const desc = (schema as any).description
+    ? `  // ${(schema as any).description}`
+    : '';
+  if (schema instanceof z.ZodObject) {
+    const shape = schema.shape as Record<string, z.ZodTypeAny>;
+    const lines = Object.entries(shape).map(
+      ([k, v]) =>
+        `${indent}  "${k}": ${describeShape(v, indent + '  ')}`,
+    );
+    return `{\n${lines.join(',\n')}\n${indent}}${desc}`;
   }
+  if (schema instanceof z.ZodArray) {
+    return `[${describeShape(def.type, indent)}, ...]${desc}`;
+  }
+  if (schema instanceof z.ZodString) return `"<string>"${desc}`;
+  if (schema instanceof z.ZodNumber) return `<number>${desc}`;
+  if (schema instanceof z.ZodBoolean) return `<boolean>${desc}`;
+  return `<value>${desc}`;
+}
 
-  return model as LanguageModelV1;
+function extractText(content: any[]): string {
+  return content
+    .filter((c: any) => c.type === 'text')
+    .map((c: any) => c.text)
+    .join('');
+}
+
+function stripCodeFence(s: string): string {
+  const trimmed = s.trim();
+  const fence = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
+  return fence ? fence[1]! : trimmed;
+}
+
+export async function generateObject<T extends z.ZodTypeAny>(args: {
+  system?: string;
+  prompt: string;
+  schema: T;
+  abortSignal?: AbortSignal;
+}): Promise<{ object: z.infer<T> }> {
+  const { model, options } = resolve();
+  const shape = describeShape(args.schema);
+  const jsonInstruction = `Respond with ONLY a JSON object, no prose, no code fences. The JSON must conform to this shape (// comments describe each field):\n${shape}`;
+  const system = args.system
+    ? `${args.system}\n\n${jsonInstruction}`
+    : jsonInstruction;
+  const context: Context = {
+    systemPrompt: system,
+    messages: [{ role: 'user', content: args.prompt, timestamp: Date.now() }],
+  };
+  const result = await complete(model, context, {
+    ...options,
+    signal: args.abortSignal,
+  });
+  const text = stripCodeFence(extractText(result.content as any));
+  const parsed = parseJsonWithRepair<unknown>(text);
+  return { object: args.schema.parse(parsed) };
 }
 
 const MinChunkSize = 140;
@@ -76,7 +158,6 @@ export function trimPrompt(
   }
 
   const overflowTokens = length - contextSize;
-  // on average it's 3 characters per token, so multiply by 3 to get a rough estimate of the number of characters
   const chunkSize = prompt.length - overflowTokens * 3;
   if (chunkSize < MinChunkSize) {
     return prompt.slice(0, MinChunkSize);
@@ -88,11 +169,9 @@ export function trimPrompt(
   });
   const trimmedPrompt = splitter.splitText(prompt)[0] ?? '';
 
-  // last catch, there's a chance that the trimmed prompt is same length as the original prompt, due to how tokens are split & innerworkings of the splitter, handle this case by just doing a hard cut
   if (trimmedPrompt.length === prompt.length) {
     return trimPrompt(prompt.slice(0, chunkSize), contextSize);
   }
 
-  // recursively trim until the prompt is within the context size
   return trimPrompt(trimmedPrompt, contextSize);
 }
