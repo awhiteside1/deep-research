@@ -5,6 +5,7 @@ export interface ResearchState {
   followUps: string[];
   visitedUrls: Set<string>;
   pageCache: Map<string, ExtractedPage>;
+  outlineMissCount: Map<string, number>;
 }
 
 export function createResearchState(): ResearchState {
@@ -13,5 +14,6 @@ export function createResearchState(): ResearchState {
     followUps: [],
     visitedUrls: new Set(),
     pageCache: new Map(),
+    outlineMissCount: new Map(),
   };
 }

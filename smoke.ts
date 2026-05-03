@@ -15,7 +15,6 @@ async function main() {
   const t0 = Date.now();
   const { answer, visitedUrls } = await deepResearch({
     query,
-    maxTurns: 5,
     usage,
   });
   const wallClockMs = Date.now() - t0;

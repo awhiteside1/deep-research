@@ -1,7 +1,10 @@
 import FirecrawlApp from '@mendable/firecrawl-js';
 
+import { getToolLogger } from '../logging.js';
 import { extractMainContent, type ExtractedPage } from './page-extract.js';
 import type { ResearchState } from './state.js';
+
+const log = getToolLogger('fetch-page');
 
 const FetchTimeoutMs = 10_000;
 
@@ -60,16 +63,36 @@ export async function loadPage(
   signal?: AbortSignal,
 ): Promise<ExtractedPage | null> {
   const cached = state.pageCache.get(url);
-  if (cached) return cached;
+  if (cached) {
+    log.debug('cache_hit', { event: 'cache_hit', url, tokens: cached.tokenCount });
+    return cached;
+  }
+  log.debug('cache_miss', { event: 'cache_miss', url });
 
   let page: ExtractedPage | null = null;
   const directHtml = await plainFetchHtml(url, signal);
-  if (directHtml) page = extractMainContent(directHtml, url, 'fetch');
+  if (directHtml) {
+    log.debug('direct_fetch', { event: 'direct_fetch', url, bytes: directHtml.length });
+    page = extractMainContent(directHtml, url, 'fetch');
+  }
   if (!page) {
     const fallbackHtml = await firecrawlHtml(url, signal);
-    if (fallbackHtml) page = extractMainContent(fallbackHtml, url, 'firecrawl');
+    if (fallbackHtml) {
+      log.debug('firecrawl_fetch', { event: 'firecrawl_fetch', url, bytes: fallbackHtml.length });
+      page = extractMainContent(fallbackHtml, url, 'firecrawl');
+    }
   }
-  if (page) state.pageCache.set(url, page);
+  if (page) {
+    state.pageCache.set(url, page);
+    log.debug('page_extracted', {
+      event: 'page_extracted',
+      url,
+      source: page.source,
+      tokens: page.tokenCount,
+    });
+  } else {
+    log.debug('page_failed', { event: 'page_failed', url });
+  }
   return page;
 }
 

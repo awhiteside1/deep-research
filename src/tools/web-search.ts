@@ -2,8 +2,11 @@ import { compact } from 'lodash-es';
 import { Type, type Static } from '@mariozechner/pi-ai';
 import type { AgentTool } from '@mariozechner/pi-agent-core';
 
+import { getToolLogger } from '../logging.js';
 import { firecrawl } from './fetch-page.js';
 import type { ResearchState } from './state.js';
+
+const log = getToolLogger('web-search');
 
 const ParamsSchema = Type.Object({
   query: Type.String({ description: 'Search query string for the web search engine.' }),
@@ -42,7 +45,13 @@ export function createWebSearchTool(deps: WebSearchToolDeps): AgentTool<typeof P
       }
 
       signal?.throwIfAborted?.();
+      log.debug('search_request', { event: 'search_request', query: params.query });
       const search = await firecrawl.search(params.query, { timeout: 15_000, limit: 5 });
+      log.debug('search_response', {
+        event: 'search_response',
+        query: params.query,
+        resultCount: search.data?.length ?? 0,
+      });
       const items = compact(
         search.data.map(item =>
           item.url

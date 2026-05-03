@@ -6,9 +6,9 @@
   "scripts": {
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "tsx": "tsx --env-file=.env.local",
-    "start": "tsx --env-file=.env.local smoke.ts",
+    "start": "tsx --env-file=.env.local src/run.ts",
     "docker": "tsx src/run.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsx --test test/**/*.test.ts"
   },
   "author": "",
   "license": "ISC",
@@ -24,6 +24,9 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
+    "@logtape/file": "^2.0.6",
+    "@logtape/logtape": "^2.0.6",
+    "@logtape/pretty": "^2.0.6",
     "@mariozechner/pi-agent-core": "^0.72.1",
     "@mariozechner/pi-ai": "^0.72.1",
     "@mendable/firecrawl-js": "^1.16.0",

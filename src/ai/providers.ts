@@ -19,60 +19,21 @@ interface ResolvedModel {
   options: ProviderStreamOptions;
 }
 
-function buildCustomModel(): ResolvedModel | undefined {
-  if (!process.env.CUSTOM_MODEL || !process.env.OPENAI_KEY) return undefined;
-  const baseUrl = process.env.OPENAI_ENDPOINT || 'https://api.openai.com/v1';
-  const model: Model<'openai-completions'> = {
-    id: process.env.CUSTOM_MODEL,
-    name: process.env.CUSTOM_MODEL,
-    api: 'openai-completions',
-    provider: 'openai',
-    baseUrl,
-    reasoning: false,
-    input: ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: Number(process.env.CONTEXT_SIZE) || 128_000,
-    maxTokens: 16_384,
-  };
-  return {
-    model: model as AnyModel,
-    options: { apiKey: process.env.OPENAI_KEY },
-  };
-}
-
-function buildFireworksModel(): ResolvedModel | undefined {
-  if (!process.env.FIREWORKS_KEY) return undefined;
-  const model = getPiModel(
-    'fireworks',
-    'accounts/fireworks/models/deepseek-v3p1',
-  );
-  return {
-    model: model as AnyModel,
-    options: { apiKey: process.env.FIREWORKS_KEY },
-  };
-}
-
-function buildOpenAIModel(): ResolvedModel | undefined {
-  if (!process.env.OPENAI_KEY) return undefined;
-  const model = getPiModel('openai', 'o3-mini');
-  return {
-    model: model as AnyModel,
-    options: { apiKey: process.env.OPENAI_KEY },
-  };
-}
+const MODEL_PROVIDER = 'openai';
+const MODEL_ID = 'gpt-5.4-mini';
 
 let cached: ResolvedModel | undefined;
 function resolve(): ResolvedModel {
   if (cached) return cached;
-  const found =
-    buildCustomModel() ?? buildFireworksModel() ?? buildOpenAIModel();
-  if (!found) {
-    throw new Error(
-      'No model configured. Set CUSTOM_MODEL+OPENAI_KEY, FIREWORKS_KEY, or OPENAI_KEY.',
-    );
+  if (!process.env.OPENAI_KEY) {
+    throw new Error('No model configured. Set OPENAI_KEY.');
   }
-  cached = found;
-  return found;
+  const model = getPiModel(MODEL_PROVIDER, MODEL_ID);
+  cached = {
+    model: model as AnyModel,
+    options: { apiKey: process.env.OPENAI_KEY },
+  };
+  return cached;
 }
 
 export function getModel(): { modelId: string } & ResolvedModel {

@@ -36,22 +36,27 @@ export function extractMainContent(
   const headings: HeadingInfo[] = [];
   let title = '';
 
+  const onHeading = (el: { textContent: string; tagName: string; attributes: Record<string, string> }) => {
+    const text = el.textContent.trim();
+    if (!text) return;
+    headings.push({
+      text,
+      level: Number(el.tagName.charAt(1)),
+      anchor: el.attributes.id || undefined,
+    });
+  };
   const markdown = htmlToMarkdown(html, {
-    minimal: true,
     origin: url,
     extraction: {
       title: el => {
         if (!title) title = el.textContent.trim();
       },
-      'h1, h2, h3, h4, h5, h6': el => {
-        const text = el.textContent.trim();
-        if (!text) return;
-        headings.push({
-          text,
-          level: Number(el.tagName.charAt(1)),
-          anchor: el.attributes.id || undefined,
-        });
-      },
+      h1: onHeading,
+      h2: onHeading,
+      h3: onHeading,
+      h4: onHeading,
+      h5: onHeading,
+      h6: onHeading,
     },
   }).trim();
 
