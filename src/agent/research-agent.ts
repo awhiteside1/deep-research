@@ -4,6 +4,7 @@ import type { AssistantMessage } from '@mariozechner/pi-ai';
 
 import { getModel } from '../ai/providers.js';
 import { createResearchState, type ResearchState } from '../tools/state.js';
+import { createReadPageTool } from '../tools/read-page.js';
 import { createWebSearchTool } from '../tools/web-search.js';
 import { UsageTracker } from './usage.js';
 
@@ -23,7 +24,13 @@ function buildSystemPrompt(maxTurns: number): string {
   return `You research the user's question on the web and answer it.
 
 Budget: ${maxTurns} turns. One turn = one assistant message (parallel tool calls count as one).
-Use web_search in parallel to cover distinct angles, then narrow. Stop early once you can answer.
+
+Tools:
+- web_search(query, researchGoal) — returns top result links (url/title/snippet) only. Does NOT fetch bodies.
+- read_page(url, sections?, query?) — fetch a page. Small pages return in full. Large pages return an outline; call again with sections=["Heading > Subheading", ...] to get just those parts. Pages are cached.
+
+Workflow: search to find candidate URLs, read_page on the most promising ones, drill into specific sections of large pages instead of dumping them whole. Run independent reads in parallel. Stop early once you can answer.
+
 Finish with a turn containing NO tool calls — just the answer in plain text.`;
 }
 
@@ -46,7 +53,10 @@ export async function runResearchAgent(
   let turnIndex = 0;
   const isLastTurn = () => turnIndex >= maxTurns;
 
-  const tools: AgentTool<any>[] = [createWebSearchTool({ state, isLastTurn })];
+  const tools: AgentTool<any>[] = [
+    createWebSearchTool({ state, isLastTurn }),
+    createReadPageTool({ state, isLastTurn }),
+  ];
 
   const agent = new Agent({
     initialState: {
