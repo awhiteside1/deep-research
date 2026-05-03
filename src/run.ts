@@ -3,11 +3,7 @@ import * as readline from 'readline';
 
 import { UsageTracker } from './agent/usage.js';
 import { getModel } from './ai/providers.js';
-import {
-  deepResearch,
-  writeFinalAnswer,
-  writeFinalReport,
-} from './deep-research.js';
+import { deepResearch, writeFinalReport } from './deep-research.js';
 import { generateFeedback } from './feedback.js';
 
 // Helper function for consistent logging
@@ -86,20 +82,20 @@ ${followUpQuestions.map((q: string, i: number) => `Q: ${q}\nA: ${answers[i]}`).j
     // outside the research loop and not part of the comparison.
   }
 
-  const { learnings, visitedUrls } = await deepResearch({
+  const { answer, visitedUrls } = await deepResearch({
     query: combinedQuery,
     maxTurns,
     usage,
   });
 
-  log(`\n\nLearnings:\n\n${learnings.join('\n')}`);
+  log(`\n\nAnswer:\n\n${answer}`);
   log(`\n\nVisited URLs (${visitedUrls.length}):\n\n${visitedUrls.join('\n')}`);
-  log('Writing final report...');
 
   if (isReport) {
+    log('Writing final report...');
     const report = await writeFinalReport({
       prompt: combinedQuery,
-      learnings,
+      answer,
       visitedUrls,
       usage,
     });
@@ -108,14 +104,7 @@ ${followUpQuestions.map((q: string, i: number) => `Q: ${q}\nA: ${answers[i]}`).j
     console.log(`\n\nFinal Report:\n\n${report}`);
     console.log('\nReport has been saved to report.md');
   } else {
-    const answer = await writeFinalAnswer({
-      prompt: combinedQuery,
-      learnings,
-      usage,
-    });
-
     await fs.writeFile('answer.md', answer, 'utf-8');
-    console.log(`\n\nFinal Answer:\n\n${answer}`);
     console.log('\nAnswer has been saved to answer.md');
   }
 
