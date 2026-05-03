@@ -4,6 +4,7 @@ import {
   getConsoleSink,
   getJsonLinesFormatter,
   getLogger,
+  lazy,
   withFilter,
 } from '@logtape/logtape';
 import { prettyFormatter } from '@logtape/pretty';
@@ -78,11 +79,7 @@ function extractToolCalls(content: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(content)) return [];
   return content
     .filter((c: any) => c && c.type === 'toolCall')
-    .map((c: any) => ({
-      id: c.id,
-      name: c.name,
-      arguments: c.arguments,
-    }));
+    .map((c: any) => ({ id: c.id, name: c.name, arguments: c.arguments }));
 }
 
 function describeArgs(toolName: string, args: any): string {
@@ -91,24 +88,76 @@ function describeArgs(toolName: string, args: any): string {
     return `"${summarize(args.query, 80)}"`;
   }
   if (toolName === 'read_page' && typeof args.url === 'string') {
-    const sections = Array.isArray(args.sections) && args.sections.length
-      ? ` [${args.sections.slice(0, 3).join(', ')}${args.sections.length > 3 ? ',…' : ''}]`
-      : '';
+    const sections =
+      Array.isArray(args.sections) && args.sections.length
+        ? ` [${args.sections.slice(0, 3).join(', ')}${args.sections.length > 3 ? ',…' : ''}]`
+        : '';
     return `${args.url}${sections}`;
   }
   return '';
 }
 
-export function attachLogging(agent: Agent, meta: { query: string; maxTurns: number; modelId: string }): void {
-  const log = getAgentLogger();
-  log.info('agent_start model={model} maxTurns={maxTurns} query={query}', {
-    event: 'agent_start',
-    model: meta.modelId,
+interface RunState {
+  query: string;
+  modelId: string;
+  maxTurns: number;
+  turn: number;
+  // inputUncached = tokens NOT served from cache; totalInput = inputUncached + cacheRead = actual context sent to model
+  inputUncached: number | undefined;
+  cacheRead: number | undefined;
+  totalInput: number | undefined;
+  output: number | undefined;
+  totalTokens: number | undefined;
+  cost: number | undefined;
+}
+
+function applyUsage(state: RunState, raw: any): void {
+  if (!raw) return;
+  const inputUncached = raw.input ?? raw.inputTokens ?? 0;
+  const cacheRead = raw.cacheRead ?? raw.cacheReadTokens ?? 0;
+  const output = raw.output ?? raw.outputTokens ?? 0;
+  state.inputUncached = inputUncached;
+  state.cacheRead = cacheRead;
+  state.totalInput = inputUncached + cacheRead;
+  state.output = output;
+  state.totalTokens = inputUncached + cacheRead + output;
+  state.cost = raw.cost;
+}
+
+export function attachLogging(
+  agent: Agent,
+  meta: { query: string; maxTurns: number; modelId: string },
+): void {
+  const state: RunState = {
+    query: meta.query,
+    modelId: meta.modelId,
     maxTurns: meta.maxTurns,
+    turn: 0,
+    inputUncached: undefined,
+    cacheRead: undefined,
+    totalInput: undefined,
+    output: undefined,
+    totalTokens: undefined,
+    cost: undefined,
+  };
+
+  const log = getAgentLogger().with({
+    modelId: lazy(() => state.modelId),
+    maxTurns: lazy(() => state.maxTurns),
+    turn: lazy(() => state.turn),
+    inputUncached: lazy(() => state.inputUncached),
+    cacheRead: lazy(() => state.cacheRead),
+    totalInput: lazy(() => state.totalInput),
+    output: lazy(() => state.output),
+    totalTokens: lazy(() => state.totalTokens),
+    cost: lazy(() => state.cost),
+  });
+
+  log.info('agent_start model={modelId} maxTurns={maxTurns} query={query}', {
+    event: 'agent_start',
     query: summarize(meta.query, 100),
   });
 
-  let turn = 0;
   let lastAssistantText = '';
   const argsById = new Map<string, { name: string; args: any }>();
 
@@ -116,36 +165,29 @@ export function attachLogging(agent: Agent, meta: { query: string; maxTurns: num
     const e = event;
     switch (e.type) {
       case 'turn_start': {
-        turn += 1;
-        log.debug('turn_start turn={turn}', { event: 'turn_start', turn });
+        state.turn += 1;
+        log.debug('turn_start turn={turn}', { event: 'turn_start' });
         break;
       }
       case 'turn_end': {
-        const msg = e.message;
-        const usage = msg?.usage;
-        const inTok = usage?.input ?? usage?.inputTokens;
-        const outTok = usage?.output ?? usage?.outputTokens;
-        log.info('turn_end turn={turn} in={input} out={output}', {
-          event: 'turn_end',
-          turn,
-          input: inTok,
-          output: outTok,
-          usage,
-        });
+        applyUsage(state, e.message?.usage);
+        log.info(
+          'turn_end turn={turn} totalInput={totalInput} inputUncached={inputUncached} cacheRead={cacheRead} out={output}',
+          { event: 'turn_end' },
+        );
         break;
       }
       case 'message_end': {
         const msg = e.message ?? {};
         const text = extractText(msg.content);
         if (msg.role === 'assistant' && text) lastAssistantText = text;
+        if (msg.role === 'assistant') applyUsage(state, msg.usage);
         log.debug('message_end', {
           event: 'message_end',
-          turn,
           role: msg.role,
           text,
           thinking: extractThinking(msg.content),
           toolCalls: extractToolCalls(msg.content),
-          usage: msg.usage,
         });
         break;
       }
@@ -192,9 +234,8 @@ export function attachLogging(agent: Agent, meta: { query: string; maxTurns: num
         break;
       }
       case 'agent_end': {
-        log.info('agent_end turns={turns} answerChars={answerChars}', {
+        log.info('agent_end turns={turn} answerChars={answerChars}', {
           event: 'agent_end',
-          turns: turn,
           answerChars: lastAssistantText.length,
         });
         break;
