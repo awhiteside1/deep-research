@@ -3,6 +3,8 @@ import { compact } from 'lodash-es';
 import pLimit from 'p-limit';
 import { z } from 'zod';
 
+import { runResearchAgent } from './agent/research-agent.js';
+import type { UsageTracker } from './agent/usage.js';
 import { generateObject, trimPrompt } from './ai/providers.js';
 import { systemPrompt } from './prompt.js';
 
@@ -40,14 +42,18 @@ async function generateSerpQueries({
   query,
   numQueries = 3,
   learnings,
+  usage,
 }: {
   query: string;
   numQueries?: number;
 
   // optional, if provided, the research will continue from the last learning
   learnings?: string[];
+  usage?: UsageTracker;
 }) {
   const res = await generateObject({
+    usage,
+    usageLabel: 'generateSerpQueries',
     system: systemPrompt(),
     prompt: `Given the following prompt from the user, generate a list of SERP queries to research the topic. Return a maximum of ${numQueries} queries, but feel free to return less if the original prompt is clear. Make sure each query is unique and not similar to each other: <prompt>${query}</prompt>\n\n${
       learnings
@@ -81,11 +87,13 @@ async function processSerpResult({
   result,
   numLearnings = 3,
   numFollowUpQuestions = 3,
+  usage,
 }: {
   query: string;
   result: SearchResponse;
   numLearnings?: number;
   numFollowUpQuestions?: number;
+  usage?: UsageTracker;
 }) {
   const contents = compact(result.data.map(item => item.markdown)).map(content =>
     trimPrompt(content, 25_000),
@@ -93,6 +101,8 @@ async function processSerpResult({
   log(`Ran ${query}, found ${contents.length} contents`);
 
   const res = await generateObject({
+    usage,
+    usageLabel: 'processSerpResult',
     abortSignal: AbortSignal.timeout(60_000),
     system: systemPrompt(),
     prompt: trimPrompt(
@@ -118,16 +128,20 @@ export async function writeFinalReport({
   prompt,
   learnings,
   visitedUrls,
+  usage,
 }: {
   prompt: string;
   learnings: string[];
   visitedUrls: string[];
+  usage?: UsageTracker;
 }) {
   const learningsString = learnings
     .map(learning => `<learning>\n${learning}\n</learning>`)
     .join('\n');
 
   const res = await generateObject({
+    usage,
+    usageLabel: 'writeFinalReport',
     system: systemPrompt(),
     prompt: trimPrompt(
       `Given the following prompt from the user, write a final report on the topic using the learnings from research. Make it as as detailed as possible, aim for 3 or more pages, include ALL the learnings from research:\n\n<prompt>${prompt}</prompt>\n\nHere are all the learnings from previous research:\n\n<learnings>\n${learningsString}\n</learnings>`,
@@ -145,15 +159,19 @@ export async function writeFinalReport({
 export async function writeFinalAnswer({
   prompt,
   learnings,
+  usage,
 }: {
   prompt: string;
   learnings: string[];
+  usage?: UsageTracker;
 }) {
   const learningsString = learnings
     .map(learning => `<learning>\n${learning}\n</learning>`)
     .join('\n');
 
   const res = await generateObject({
+    usage,
+    usageLabel: 'writeFinalAnswer',
     system: systemPrompt(),
     prompt: trimPrompt(
       `Given the following prompt from the user, write a final answer on the topic using the learnings from research. Follow the format specified in the prompt. Do not yap or babble or include any other text than the answer besides the format specified in the prompt. Keep the answer as concise as possible - usually it should be just a few words or maximum a sentence. Try to follow the format specified in the prompt (for example, if the prompt is using Latex, the answer should be in Latex. If the prompt gives multiple answer choices, the answer should be one of the choices).\n\n<prompt>${prompt}</prompt>\n\nHere are all the learnings from research on the topic that you can use to help answer the prompt:\n\n<learnings>\n${learningsString}\n</learnings>`,
@@ -170,11 +188,34 @@ export async function writeFinalAnswer({
 
 export async function deepResearch({
   query,
+  maxTurns,
+  usage,
+}: {
+  query: string;
+  // Kept for back-compat with old callers; ignored by the agent path.
+  breadth?: number;
+  depth?: number;
+  learnings?: string[];
+  visitedUrls?: string[];
+  onProgress?: (progress: ResearchProgress) => void;
+  maxTurns?: number;
+  usage?: UsageTracker;
+}): Promise<ResearchResult> {
+  const { state } = await runResearchAgent({ query, maxTurns, usage });
+  return {
+    learnings: [...new Set(state.learnings.map(l => l.learning))],
+    visitedUrls: [...state.visitedUrls],
+  };
+}
+
+export async function deepResearchClassic({
+  query,
   breadth,
   depth,
   learnings = [],
   visitedUrls = [],
   onProgress,
+  usage,
 }: {
   query: string;
   breadth: number;
@@ -182,6 +223,7 @@ export async function deepResearch({
   learnings?: string[];
   visitedUrls?: string[];
   onProgress?: (progress: ResearchProgress) => void;
+  usage?: UsageTracker;
 }): Promise<ResearchResult> {
   const progress: ResearchProgress = {
     currentDepth: depth,
@@ -201,6 +243,7 @@ export async function deepResearch({
     query,
     learnings,
     numQueries: breadth,
+    usage,
   });
 
   reportProgress({
@@ -229,6 +272,7 @@ export async function deepResearch({
             query: serpQuery.query,
             result,
             numFollowUpQuestions: newBreadth,
+            usage,
           });
           const allLearnings = [...learnings, ...newLearnings.learnings];
           const allUrls = [...visitedUrls, ...newUrls];
@@ -248,13 +292,14 @@ export async function deepResearch({
             Follow-up research directions: ${newLearnings.followUpQuestions.map(q => `\n${q}`).join('')}
           `.trim();
 
-            return deepResearch({
+            return deepResearchClassic({
               query: nextQuery,
               breadth: newBreadth,
               depth: newDepth,
               learnings: allLearnings,
               visitedUrls: allUrls,
               onProgress,
+              usage,
             });
           } else {
             reportProgress({

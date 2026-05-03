@@ -115,11 +115,15 @@ function stripCodeFence(s: string): string {
   return fence ? fence[1]! : trimmed;
 }
 
+import type { UsageTracker } from '../agent/usage.js';
+
 export async function generateObject<T extends z.ZodTypeAny>(args: {
   system?: string;
   prompt: string;
   schema: T;
   abortSignal?: AbortSignal;
+  usage?: UsageTracker;
+  usageLabel?: string;
 }): Promise<{ object: z.infer<T> }> {
   const { model, options } = resolve();
   const shape = describeShape(args.schema);
@@ -135,6 +139,9 @@ export async function generateObject<T extends z.ZodTypeAny>(args: {
     ...options,
     signal: args.abortSignal,
   });
+  if (args.usage) {
+    args.usage.recordCompletion(args.usageLabel ?? 'generateObject', result);
+  }
   const text = stripCodeFence(extractText(result.content as any));
   const parsed = parseJsonWithRepair<unknown>(text);
   return { object: args.schema.parse(parsed) };

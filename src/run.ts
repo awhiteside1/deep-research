@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as readline from 'readline';
 
+import { UsageTracker } from './agent/usage.js';
 import { getModel } from './ai/providers.js';
 import {
   deepResearch,
@@ -36,18 +37,13 @@ async function run() {
   const initialQuery = await askQuestion('What would you like to research? ');
 
   // Get breath and depth parameters
-  const breadth =
+  const maxTurns =
     parseInt(
       await askQuestion(
-        'Enter research breadth (recommended 2-10, default 4): ',
+        'Enter max research turns (recommended 5-20, default 10): ',
       ),
       10,
-    ) || 4;
-  const depth =
-    parseInt(
-      await askQuestion('Enter research depth (recommended 1-5, default 2): '),
-      10,
-    ) || 2;
+    ) || 10;
   const isReport =
     (await askQuestion(
       'Do you want to generate a long report or a specific answer? (report/answer, default report): ',
@@ -83,10 +79,17 @@ ${followUpQuestions.map((q: string, i: number) => `Q: ${q}\nA: ${answers[i]}`).j
 
   log('\nStarting research...\n');
 
+  const usage = new UsageTracker();
+
+  if (isReport) {
+    // generateFeedback already ran above without a tracker; that's fine — it's
+    // outside the research loop and not part of the comparison.
+  }
+
   const { learnings, visitedUrls } = await deepResearch({
     query: combinedQuery,
-    breadth,
-    depth,
+    maxTurns,
+    usage,
   });
 
   log(`\n\nLearnings:\n\n${learnings.join('\n')}`);
@@ -98,6 +101,7 @@ ${followUpQuestions.map((q: string, i: number) => `Q: ${q}\nA: ${answers[i]}`).j
       prompt: combinedQuery,
       learnings,
       visitedUrls,
+      usage,
     });
 
     await fs.writeFile('report.md', report, 'utf-8');
@@ -107,12 +111,15 @@ ${followUpQuestions.map((q: string, i: number) => `Q: ${q}\nA: ${answers[i]}`).j
     const answer = await writeFinalAnswer({
       prompt: combinedQuery,
       learnings,
+      usage,
     });
 
     await fs.writeFile('answer.md', answer, 'utf-8');
     console.log(`\n\nFinal Answer:\n\n${answer}`);
     console.log('\nAnswer has been saved to answer.md');
   }
+
+  usage.print('Token usage');
 
   rl.close();
 }
